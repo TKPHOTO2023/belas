@@ -1,0 +1,137 @@
+// Bela data model.
+//
+// Tenancy: every business you resell to is a Workspace. Your own company is
+// the one Workspace with isPlatform = true; its users are PLATFORM_ADMINs and
+// can see and manage every client workspace.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Workspace {
+  id         String   @id @default(cuid())
+  name       String
+  slug       String   @unique
+  isPlatform Boolean  @default(false)
+  active     Boolean  @default(true)
+
+  // White-label branding shown to this client's users.
+  brandName  String?
+  brandColor String   @default("#7c3aed")
+  logoUrl    String?
+
+  // What you charge this client, in cents per started minute.
+  pricePerMinuteCents Int @default(150)
+  // Free minutes included each month before metering kicks in.
+  includedMinutes     Int @default(0)
+
+  users     User[]
+  agents    Agent[]
+  numbers   PhoneNumber[]
+  calls     Call[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  name         String
+  passwordHash String
+  // PLATFORM_ADMIN | CLIENT_ADMIN | CLIENT_MEMBER
+  role         String    @default("CLIENT_ADMIN")
+  workspaceId  String
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+}
+
+model Agent {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  name         String
+  // Greeting the agent speaks when the call connects.
+  firstMessage String
+  // Personality, goals and rules for the conversation.
+  systemPrompt String    @db.Text
+  // Free-form business facts (hours, prices, FAQs) appended to the prompt.
+  knowledge    String    @default("") @db.Text
+  language     String    @default("en")
+
+  // LLM used for the conversation, e.g. openai/gpt-4o-mini, anthropic/claude-...
+  llmProvider  String    @default("openai")
+  llmModel     String    @default("gpt-4o-mini")
+  temperature  Float     @default(0.5)
+  // Text-to-speech voice, e.g. 11labs + voice id, or vapi + "Elliot".
+  voiceProvider String   @default("vapi")
+  voiceId       String   @default("Elliot")
+  // Speech-to-text.
+  transcriber   String   @default("deepgram")
+
+  maxDurationSec Int     @default(600)
+  // Number the agent transfers to when the caller asks for a human.
+  transferNumber String?
+
+  // Id of the mirrored assistant on the voice provider.
+  providerAgentId String?  @unique
+  status          String   @default("active") // active | paused
+
+  numbers   PhoneNumber[]
+  calls     Call[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model PhoneNumber {
+  id               String    @id @default(cuid())
+  workspaceId      String
+  workspace        Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  number           String
+  label            String?
+  providerNumberId String?   @unique
+  agentId          String?
+  agent            Agent?    @relation(fields: [agentId], references: [id], onDelete: SetNull)
+  createdAt        DateTime  @default(now())
+}
+
+model Call {
+  id             String    @id @default(cuid())
+  workspaceId    String
+  workspace      Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  agentId        String?
+  agent          Agent?    @relation(fields: [agentId], references: [id], onDelete: SetNull)
+
+  providerCallId String    @unique
+  // inbound | outbound | web
+  direction      String
+  fromNumber     String?
+  toNumber       String?
+  // queued | ringing | in-progress | ended
+  status         String    @default("queued")
+  endedReason    String?
+
+  startedAt      DateTime?
+  endedAt        DateTime?
+  durationSec    Int       @default(0)
+
+  // What the voice provider charged you, and what you bill the client.
+  providerCostCents Int    @default(0)
+  billedCents       Int    @default(0)
+
+  transcript     String?   @db.Text
+  summary        String?   @db.Text
+  recordingUrl   String?
+  successful     Boolean?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([workspaceId, createdAt])
+}
